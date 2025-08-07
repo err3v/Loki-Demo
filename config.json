@@ -1,0 +1,8 @@
+{
+  "lokiAlloyUrl": "http://localhost:1337",
+  "lokiCloudUrl": "https://logs-prod-xxx.grafana.net/loki/api/v1/push",
+  "grafanaUsername": "username",
+  "grafanaPassword": "pass",
+  "eventLogSource": "LokiDemoApp",
+  "logFilePath": "C:\\GrafanaLogs\\csharp-demo.log"
+} 
