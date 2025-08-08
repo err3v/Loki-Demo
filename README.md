@@ -2,6 +2,34 @@
 
 A comprehensive .NET demo application that demonstrates logging integration with Grafana Cloud using Grafana Alloy as a local collector. This project showcases how to set up structured logging from .NET applications to Grafana Cloud via Alloy.
 
+## 📋 Table of Contents
+
+- [🚀 Features](#-features)
+- [📖 What is Grafana Alloy?](#-what-is-grafana-alloy)
+- [📋 Prerequisites](#-prerequisites)
+- [🛠️ Setup Instructions](#️-setup-instructions)
+  - [Step 1: Create Grafana Cloud Account](#step-1-create-grafana-cloud-account)
+  - [Step 2: Download the Repository](#step-2-download-the-repository)
+  - [Step 3: Configure Grafana Cloud Data Source](#step-3-configure-grafana-cloud-data-source)
+  - [Step 4: Install Grafana Alloy](#step-4-install-grafana-alloy)
+  - [Step 5: Update Configuration](#step-5-update-configuration)
+  - [Step 6: Build and Run](#step-6-build-and-run)
+  - [Step 7: Test the Connection](#step-7-test-the-connection)
+  - [Step 8: Verify Logs in Grafana](#step-8-verify-logs-in-grafana)
+- [📊 Viewing Logs](#-viewing-logs)
+  - [Grafana Cloud](#grafana-cloud)
+  - [File Logging](#file-logging)
+  - [Windows Event Viewer](#windows-event-viewer)
+- [🔧 Troubleshooting](#-troubleshooting)
+  - [Common Issues](#common-issues)
+  - [Debug Mode](#debug-mode)
+- [📁 Project Structure](#-project-structure)
+- [🧪 Testing Connections](#-testing-connections)
+- [📚 Learning Resources](#-learning-resources)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🆘 Support](#-support)
+
 ## 🚀 Features
 
 - **Grafana Cloud Integration**: Direct logging to Grafana Cloud via Alloy collector
