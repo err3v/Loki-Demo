@@ -53,6 +53,8 @@ cd Loki-demo
    - Copy the `alloy.config` file from this repository
    - Replace `username` with your Grafana Cloud username
    - Replace `token från när du laddade ner alloy` with the token you generated
+   - Save
+   - Go to "services" and search for alloy -> restart. (You have to restart the alloy services each time you make a change to the config)
 
 ### Step 5: Update Configuration
 1. **Edit `config.json`** in the project root:
@@ -188,3 +190,4 @@ If you encounter issues:
 ---
 
 **Happy Logging! 🎉** 
+
