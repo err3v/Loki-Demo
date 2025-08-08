@@ -1,10 +1,12 @@
-﻿using Serilog;
+using Serilog;
 using Serilog.Sinks.Grafana.Loki;
 using Serilog.Sinks.EventLog;
 using System;
 using System.IO;
 using System.Text.Json;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 // Read configuration from JSON file and deserialize into strongly-typed Config object
 var configText = File.ReadAllText("config.json");
@@ -19,7 +21,7 @@ Console.WriteLine("=== Loki Demo - Choose Logging Method ===");
 Console.WriteLine($"1. Log to file ({config.logFilePath})");
 Console.WriteLine($"2. Log directly to Alloy ({config.lokiAlloyUrl})");
 Console.WriteLine($"3. Log to Windows Event Viewer (Source: {config.eventLogSource})");
-Console.WriteLine($"4. Log to Grafana Cloud ({config.lokiCloudUrl})");
+Console.WriteLine($"4. Log to Grafana Cloud via Serilog ({config.lokiCloudUrl})");
 Console.Write("Enter your choice (1, 2, 3 or 4): ");
 
 var choice = Console.ReadLine();
@@ -33,6 +35,9 @@ Console.WriteLine($"Will generate {logCount} logs...");
 
 try
 {
+    // Enable Serilog SelfLog for debugging sink issues (helps detect 404, auth errors, etc.)
+    Serilog.Debugging.SelfLog.Enable(Console.Error);
+    
     // Initialize a basic Serilog logger for console output during setup
     Log.Logger = new LoggerConfiguration()
         .MinimumLevel.Information()
@@ -118,6 +123,23 @@ async Task LogToAlloy(int logCount)
 {
     Console.WriteLine($"DEBUG: Configuring Serilog to send to: {config.lokiAlloyUrl}");
     
+    // Validate configuration before attempting to connect
+    if (string.IsNullOrEmpty(config.lokiAlloyUrl))
+    {
+        Console.WriteLine("❌ ERROR: Alloy URL is missing!");
+        Console.WriteLine("   Please check your config.json file and ensure lokiAlloyUrl is set.");
+        Console.WriteLine("   Example: http://localhost:1337");
+        return;
+    }
+    
+    if (!config.lokiAlloyUrl.StartsWith("http://") && !config.lokiAlloyUrl.StartsWith("https://"))
+    {
+        Console.WriteLine("❌ ERROR: Invalid Alloy URL!");
+        Console.WriteLine("   The lokiAlloyUrl should start with 'http://' or 'https://'");
+        Console.WriteLine("   Example: http://localhost:1337");
+        return;
+    }
+    
     try
     {
         // Configure Serilog with Loki/Alloy sink for remote log aggregation
@@ -142,6 +164,9 @@ async Task LogToAlloy(int logCount)
             .CreateLogger();
 
         Console.WriteLine("DEBUG: Serilog configuration successful");
+        Console.WriteLine("💡 TIP: If you see connection errors below, make sure Alloy is running");
+        Console.WriteLine("   and accessible at the configured URL.");
+        
         Log.Information("🎉 .NET-demo starting - sending realistic business logs to Alloy at {LokiAlloyUrl}", config.lokiAlloyUrl);
         
         await GenerateRealisticLogs("alloy", logCount);
@@ -161,21 +186,45 @@ async Task LogToAlloy(int logCount)
 }
 
 /// <summary>
-/// Logs realistic business data to Grafana Cloud via HTTP API.
-/// This method demonstrates sending logs to Grafana Cloud for centralized log aggregation.
-/// Note: This method currently uses null credentials as the Serilog.Sinks.Grafana.Loki
-/// package may require additional configuration for Grafana Cloud authentication.
-/// For production use, consider using Grafana Alloy as a local proxy to Grafana Cloud.
+/// Logs realistic business data to Grafana Cloud via Serilog sink.
+/// This method demonstrates sending logs to Grafana Cloud using the Serilog.Sinks.Grafana.Loki package
+/// with proper LokiCredentials for authentication.
 /// </summary>
 /// <param name="logCount">Number of logs to generate</param>
 async Task LogToGrafanaCloud(int logCount)
 {
     Console.WriteLine($"DEBUG: Configuring Serilog to send to Grafana Cloud: {config.lokiCloudUrl}");
-    Console.WriteLine("WARNING: Grafana Cloud authentication may not work with this sink configuration.");
-    Console.WriteLine("Consider using option 2 (Alloy) which forwards to Grafana Cloud automatically.");
+    
+    // Validate configuration before attempting to connect
+    if (string.IsNullOrEmpty(config.grafanaUsername) || string.IsNullOrEmpty(config.grafanaPassword))
+    {
+        Console.WriteLine("❌ ERROR: Grafana Cloud credentials are missing!");
+        Console.WriteLine("   Please check your config.json file and ensure:");
+        Console.WriteLine("   - grafanaUsername is set to your Grafana Cloud stack ID");
+        Console.WriteLine("   - grafanaPassword is set to your Grafana Cloud API key");
+        Console.WriteLine("   See README.md for setup instructions.");
+        return;
+    }
+    
+    if (!config.lokiCloudUrl.StartsWith("https://"))
+    {
+        Console.WriteLine("❌ ERROR: Invalid Grafana Cloud URL!");
+        Console.WriteLine("   The lokiCloudUrl should start with 'https://'");
+        Console.WriteLine("   Example: https://logs-prod-xxx.grafana.net");
+        return;
+    }
     
     try
     {
+        // Create Grafana Cloud credentials using stack ID and API key
+        var credentials = new Serilog.Sinks.Grafana.Loki.LokiCredentials
+        {
+            Login = config.grafanaUsername,     // Stack ID (e.g., "123456")
+            Password = config.grafanaPassword  // API key
+        };
+        
+
+
         // Configure Serilog with Grafana Cloud Loki sink for remote log aggregation
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Verbose() // Capture all log levels including Debug
@@ -183,38 +232,39 @@ async Task LogToGrafanaCloud(int logCount)
             .Enrich.WithProperty("ALabel", "ALabelValue") // Add custom property to all log entries
             .WriteTo.Console() // Keep console output for local debugging
             .WriteTo.GrafanaLoki(
-                uri: config.lokiCloudUrl, // Grafana Cloud Loki endpoint URL
-                credentials: null, // Authentication not supported in this sink version
+                uri: "https://logs-prod-025.grafana.net", // Use base URL without /loki/api/v1/push
+                credentials: credentials, // Proper Grafana Cloud authentication
                 labels: new List<LokiLabel>
                 {
                     // Labels help organize and filter logs in Grafana Cloud
                     new() { Key = "app", Value = "LokiDemo" }, // Application identifier
                     new() { Key = "env", Value = "cloud" }, // Environment
                     new() { Key = "source", Value = "csharp-demo" }, // Source system
-                    new() { Key = "method", Value = "grafana-cloud" } // Logging method
+                    new() { Key = "method", Value = "serilog-grafana-cloud" } // Logging method
                 },
                 restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug // Minimum level to send to Loki
             )
             .CreateLogger();
 
         Console.WriteLine("DEBUG: Serilog Grafana Cloud configuration successful");
-        Log.Information("🎉 .NET-demo starting - sending realistic business logs to Grafana Cloud at {LokiCloudUrl}", config.lokiCloudUrl);
+        Console.WriteLine("💡 TIP: If you see any error messages below (like 404, 401, etc.),");
+        Console.WriteLine("   check your Grafana Cloud credentials and URL in config.json");
+        Console.WriteLine("   The SelfLog will show detailed error information.");
         
-        await GenerateRealisticLogs("grafana-cloud", logCount);
+        Log.Information("🎉 .NET-demo starting - sending realistic business logs to Grafana Cloud via Serilog at {LokiCloudUrl}", config.lokiCloudUrl);
         
-        Log.Information("Grafana Cloud logging demo completed successfully");
+        await GenerateRealisticLogs("serilog-grafana-cloud", logCount);
+        
+        Log.Information("Grafana Cloud Serilog logging demo completed successfully");
+        
         Log.CloseAndFlush(); // Ensure all logs are sent before closing
         
-        Console.WriteLine($"DEBUG: Log.CloseAndFlush() completed");
-        Console.WriteLine($"Logs sent to Grafana Cloud: {config.lokiCloudUrl}");
-        Console.WriteLine("NOTE: If authentication failed, use option 2 (Alloy) instead for Grafana Cloud integration.");
+        Console.WriteLine($"Logs sent to Grafana Cloud via Serilog: {config.lokiCloudUrl}");
     }
     catch (Exception ex)
     {
         Console.WriteLine($"DEBUG: Error in LogToGrafanaCloud: {ex.Message}");
         Console.WriteLine($"DEBUG: Stack trace: {ex.StackTrace}");
-        Console.WriteLine("This is expected if Grafana Cloud authentication is not properly configured.");
-        Console.WriteLine("Use option 2 (Alloy) for reliable Grafana Cloud integration.");
         throw;
     }
 }
