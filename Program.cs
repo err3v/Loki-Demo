@@ -1,12 +1,7 @@
 using Serilog;
 using Serilog.Sinks.Grafana.Loki;
-using Serilog.Sinks.EventLog;
-using System;
-using System.IO;
 using System.Text.Json;
 using System.Diagnostics;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 
 // Read configuration from JSON file and deserialize into strongly-typed Config object
 var configText = File.ReadAllText("config.json");
