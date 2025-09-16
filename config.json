@@ -1,6 +1,6 @@
 {
   "lokiAlloyUrl": "http://localhost:1337",
-  "lokiCloudUrl": "https://logs-prod-xxx.grafana.net/loki/api/v1/push",
+  "lokiCloudUrl": "https://logs-prod-025.grafana.net",
   "grafanaUsername": "username",
   "grafanaPassword": "pass",
   "eventLogSource": "LokiDemoApp",
