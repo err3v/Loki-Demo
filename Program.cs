@@ -1,5 +1,8 @@
 using Serilog;
 using Serilog.Sinks.Grafana.Loki;
+using Serilog.Core;
+using Serilog.Events;
+using Serilog.Formatting.Compact;
 using System.Text.Json;
 using System.Diagnostics;
 
@@ -15,8 +18,7 @@ if (config == null)
 Console.WriteLine("=== Loki Demo - Choose Logging Method ===");
 Console.WriteLine($"1. Log to file ({config.logFilePath})");
 Console.WriteLine($"2. Log directly to Alloy ({config.lokiAlloyUrl})");
-Console.WriteLine($"3. Log to Windows Event Viewer (Source: {config.eventLogSource})");
-Console.WriteLine($"4. Log to Grafana Cloud via Serilog ({config.lokiCloudUrl})");
+Console.WriteLine($"3. Log to Grafana Cloud via Serilog ({config.lokiCloudUrl})");
 Console.Write("Enter your choice (1, 2, 3 or 4): ");
 
 var choice = Console.ReadLine();
@@ -48,9 +50,6 @@ try
             await LogToAlloy(logCount);
             break;
         case "3":
-            await LogToEventViewer(logCount);
-            break;
-        case "4":
             await LogToGrafanaCloud(logCount);
             break;
         default:
@@ -84,21 +83,34 @@ async Task LogToFile(int logCount)
     {
         Directory.CreateDirectory(directory!);
     }
+
+    var jsonlPath = Path.Combine(
+        directory,
+        Path.GetFileNameWithoutExtension(logFilePath) + ".jsonl"
+    );
     
     // Configure Serilog with multiple sinks (output destinations)
     Log.Logger = new LoggerConfiguration()
         .MinimumLevel.Information() // Only log Information level and above
+        .Enrich.With(new NormalizedLevelEnricher())
         .WriteTo.Console() // Output to console for immediate feedback
+        //Human readable
         .WriteTo.File(
             path: logFilePath,
             rollingInterval: RollingInterval.Day, // Create new file each day
             retainedFileCountLimit: 7, // Keep only 7 days of log files
             outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}"
-            // Custom template: timestamp with timezone, log level, message, and exception details
+        )
+        // 2) JSON Lines for Alloy
+        .WriteTo.File(
+            formatter: new RenderedCompactJsonFormatter(), // inkluderar @t, @m + properties
+            path: jsonlPath,
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 7
         )
         .CreateLogger();
 
-    Log.Information("🎉 .NET-demo starting - writing realistic business logs to file: {LogFilePath}", logFilePath);
+    Log.Information(" .NET-demo starting - writing logs to {TextPath} and JSONL to {JsonPath}", logFilePath, jsonlPath);
     
     await GenerateRealisticLogs("file", logCount);
     
@@ -106,7 +118,8 @@ async Task LogToFile(int logCount)
     // Flush any buffered logs and close the logger properly
     Log.CloseAndFlush();
     
-    Console.WriteLine($"Logs written to: {logFilePath}");
+    Console.WriteLine($"Text:  {logFilePath}");
+    Console.WriteLine($"JSONL: {jsonlPath}");
 }
 
 /// <summary>
@@ -139,7 +152,7 @@ async Task LogToAlloy(int logCount)
     {
         // Configure Serilog with Loki/Alloy sink for remote log aggregation
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Verbose() // Capture all log levels including Debug
+            .MinimumLevel.Information() // Capture all log levels including Debug
             .Enrich.FromLogContext() // Add contextual information from LogContext
             .Enrich.WithProperty("ALabel", "ALabelValue") // Add custom property to all log entries
             .WriteTo.Console() // Keep console output for local debugging
@@ -154,6 +167,7 @@ async Task LogToAlloy(int logCount)
                     new() { Key = "source", Value = "csharp-demo" }, // Source system
                     new() { Key = "method", Value = "direct-alloy" } // Logging method
                 },
+                propertiesAsLabels: new[] { "level" },
                 restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug // Minimum level to send to Loki
             )
             .CreateLogger();
@@ -209,6 +223,13 @@ async Task LogToGrafanaCloud(int logCount)
         return;
     }
     
+    if (config.lokiCloudUrl.Contains("xxx"))
+    {
+        Console.WriteLine("❌ ERROR: You forgot to change the url");
+        Console.WriteLine("   Example: https://logs-prod-025.grafana.net");
+        return;
+    }
+    
     try
     {
         // Create Grafana Cloud credentials using stack ID and API key
@@ -217,26 +238,25 @@ async Task LogToGrafanaCloud(int logCount)
             Login = config.grafanaUsername,     // Stack ID (e.g., "123456")
             Password = config.grafanaPassword  // API key
         };
-        
-
 
         // Configure Serilog with Grafana Cloud Loki sink for remote log aggregation
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Verbose() // Capture all log levels including Debug
+            .MinimumLevel.Information() // Capture all log levels including Debug
             .Enrich.FromLogContext() // Add contextual information from LogContext
             .Enrich.WithProperty("ALabel", "ALabelValue") // Add custom property to all log entries
             .WriteTo.Console() // Keep console output for local debugging
             .WriteTo.GrafanaLoki(
-                uri: "https://logs-prod-025.grafana.net", // Use base URL without /loki/api/v1/push
+                uri: config.lokiCloudUrl, // Use base URL without /loki/api/v1/push
                 credentials: credentials, // Proper Grafana Cloud authentication
                 labels: new List<LokiLabel>
                 {
                     // Labels help organize and filter logs in Grafana Cloud
                     new() { Key = "app", Value = "LokiDemo" }, // Application identifier
-                    new() { Key = "env", Value = "cloud" }, // Environment
+                    new() { Key = "env", Value = "local" }, // Environment
                     new() { Key = "source", Value = "csharp-demo" }, // Source system
                     new() { Key = "method", Value = "serilog-grafana-cloud" } // Logging method
                 },
+                propertiesAsLabels: new[] { "level" },
                 restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug // Minimum level to send to Loki
             )
             .CreateLogger();
@@ -245,15 +265,15 @@ async Task LogToGrafanaCloud(int logCount)
         Console.WriteLine("💡 TIP: If you see any error messages below (like 404, 401, etc.),");
         Console.WriteLine("   check your Grafana Cloud credentials and URL in config.json");
         Console.WriteLine("   The SelfLog will show detailed error information.");
-        
+
         Log.Information("🎉 .NET-demo starting - sending realistic business logs to Grafana Cloud via Serilog at {LokiCloudUrl}", config.lokiCloudUrl);
-        
+
         await GenerateRealisticLogs("serilog-grafana-cloud", logCount);
-        
+
         Log.Information("Grafana Cloud Serilog logging demo completed successfully");
-        
+
         Log.CloseAndFlush(); // Ensure all logs are sent before closing
-        
+
         Console.WriteLine($"Logs sent to Grafana Cloud via Serilog: {config.lokiCloudUrl}");
     }
     catch (Exception ex)
@@ -264,6 +284,8 @@ async Task LogToGrafanaCloud(int logCount)
     }
 }
 
+#region EventViewer
+// Fick inte denna att fungera på ett tillräckligt snyggt sätt. Bortse från denna. Kommer att fixa i framtiden om intrsse finns. 
 /// <summary>
 /// Logs realistic business data to Windows Event Viewer.
 /// This method demonstrates Windows-specific logging for system administrators.
@@ -274,31 +296,11 @@ async Task LogToEventViewer(int logCount)
     Console.WriteLine($"DEBUG: Configuring Serilog to send to Windows Event Viewer (Source: {config.eventLogSource})");
     try
     {
-        // Windows Event Log requires a registered "source" before writing
-        // This source must be created once (typically by an administrator)
-        if (!EventLog.SourceExists(config.eventLogSource))
-        {
-            try
-            {
-                // Create the event source in the Application log
-                EventLog.CreateEventSource(config.eventLogSource, "Application");
-                Console.WriteLine($"Event Log source '{config.eventLogSource}' created. Please restart the application.");
-                return;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Failed to create Event Log source '{config.eventLogSource}'. Try running as administrator.");
-                Console.WriteLine("You can also create the source as Powershell(start as admin) and use 'New-EventLog -LogName Application -Source LokiDemoApp'");
-                Console.WriteLine($"Error: {ex.Message}");
-                throw;
-            }
-        }
-
         // Configure Serilog with Windows Event Log sink
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Verbose() // Capture all log levels
+            .MinimumLevel.Information() // Capture all log levels
             .Enrich.FromLogContext() // Add contextual information
-            .Enrich.WithProperty("ALabel", "ALabelValue") // Add custom property
+            .Enrich.WithProperty("level", "info") // Add custom property
             .WriteTo.Console() // Keep console output
             .WriteTo.EventLog(
                 source: config.eventLogSource, // Event source name
@@ -308,9 +310,9 @@ async Task LogToEventViewer(int logCount)
             .CreateLogger();
 
         Console.WriteLine("DEBUG: Serilog EventLog configuration successful");
-        Log.Information("🎉 .NET-demo starting - sending realistic business logs to Windows Event Viewer (Source: {EventLogSource})", config.eventLogSource);
+        Console.WriteLine($"🎉 .NET-demo starting - sending realistic business logs to Windows Event Viewer (Source: {config.eventLogSource})");
         await GenerateRealisticLogs("eventlog", logCount);
-        Log.Information("Event Viewer logging demo completed successfully");
+        Console.WriteLine("Event Viewer logging demo completed successfully");
         Log.CloseAndFlush();
         Console.WriteLine($"DEBUG: Log.CloseAndFlush() completed");
         Console.WriteLine($"Logs sent to Windows Event Viewer (Source: {config.eventLogSource})");
@@ -323,6 +325,44 @@ async Task LogToEventViewer(int logCount)
     }
 }
 
+void LogEventlog(string operation, string entity, string entityId, string userId, int elapsedTime, string status, string logLevel)
+{
+    var jsonModel = new
+    {
+        level = logLevel,
+        Operation = operation,
+        Entity = entity,
+        EntityId = entityId,
+        UserId = userId,
+        ElapsedTime = elapsedTime,
+        Status = status
+    };
+
+    var json = JsonSerializer.Serialize(jsonModel, new JsonSerializerOptions
+    {
+        WriteIndented = false
+    });
+
+    using (var eventLog = new EventLog())
+    {
+        eventLog.Source = config.eventLogSource;
+        // Use structured logging with named parameters for better querying and filtering
+        switch (logLevel)
+        {
+            case "info":
+                eventLog.WriteEntry(json, EventLogEntryType.Information);
+                break;
+            case "warn":
+                eventLog.WriteEntry(json, EventLogEntryType.Warning);
+                break;
+            case "error":
+                eventLog.WriteEntry(json, EventLogEntryType.Error);
+                break;
+        }
+    }
+}
+#endregion EventViewer
+
 /// <summary>
 /// Determines the log level based on a random roll with 90% Info, 5% Warning, 5% Error distribution.
 /// This simulates realistic log level distribution in production systems.
@@ -334,9 +374,9 @@ string DetermineLogLevel(Random random)
     var roll = random.Next(1, 101); // Generate number 1-100
     return roll switch
     {
-        <= 90 => "Information",  // 90% chance (rolls 1-90)
-        <= 95 => "Warning",      // 5% chance (rolls 91-95)
-        _ => "Error"             // 5% chance (rolls 96-100)
+        <= 90 => "info",  // 90% chance (rolls 1-90)
+        <= 95 => "warn",      // 5% chance (rolls 91-95)
+        _ => "error"             // 5% chance (rolls 96-100)
     };
 }
 
@@ -356,16 +396,16 @@ void LogBusinessOperation(string operation, string entity, string entityId, stri
     // Use structured logging with named parameters for better querying and filtering
     switch (logLevel)
     {
-        case "Information":
-            Log.Information("{Operation} {Entity} operation completed. EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}", 
+        case "info":
+            Log.Information("Operation {Operation}, Entity: {Entity}, EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}",
                 operation, entity, entityId, userId, elapsedTime, status);
             break;
-        case "Warning":
-            Log.Warning("{Operation} {Entity} operation completed with warning. EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}", 
+        case "warn":
+            Log.Warning("Operation {Operation}, Entity: {Entity}, EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}",
                 operation, entity, entityId, userId, elapsedTime, status);
             break;
-        case "Error":
-            Log.Error("{Operation} {Entity} operation failed. EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}", 
+        case "error":
+            Log.Error("Operation {Operation}, Entity: {Entity}, EntityId: {EntityId}, UserId: {UserId}, ElapsedTime: {ElapsedTime}ms, Status: {Status}",
                 operation, entity, entityId, userId, elapsedTime, status);
             break;
     }
@@ -380,15 +420,15 @@ void LogBusinessOperation(string operation, string entity, string entityId, stri
 async Task GenerateRealisticLogs(string method, int count)
 {
     var random = new Random();
-    
+
     // Predefined arrays of business entities and operations to simulate realistic scenarios
     var ENTITIES = new[] { "Contact", "Account", "Opportunity", "Lead", "Case", "Product", "Order", "Invoice" };
     var OPERATIONS = new[] { "Create", "Update", "Delete", "Read", "Search", "Export", "Import", "Validate", "Process", "Archive" };
     var USERS = new[] { "john.doe", "jane.smith", "bob.wilson", "alice.johnson", "charlie.brown", "diana.prince", "bruce.wayne", "peter.parker" };
-    var STATUSES = new[] { "Success", "Failed", "Pending", "Cancelled", "In Progress", "Completed", "Error", "Warning" };
-    
+    var STATUSES = new[] { "Success", "Failed", "Pending", "Cancelled", "Completed", "Error", "Warning" };
+
     Console.WriteLine($"Generating {count} realistic business logs...");
-    
+
     for (var i = 1; i <= count; i++)
     {
         // Generate random business data for each log entry
@@ -399,31 +439,25 @@ async Task GenerateRealisticLogs(string method, int count)
         var entityId = Guid.NewGuid().ToString(); // Generate unique identifier
         var userId = Guid.NewGuid().ToString(); // Generate unique user identifier
         var elapsedTime = random.Next(50, 2000); // Random duration between 50ms and 2 seconds
-        
+
         // Generate log levels with realistic distribution (90% Info, 5% Warning, 5% Error)
         var logLevel = DetermineLogLevel(random);
-        
+
+        //If (method = eventlog) { LogEventlog(operation, entity, entityId, userId, elapsedTime, status, logLevel); }
+
         // Log the business operation with structured data
         LogBusinessOperation(operation, entity, entityId, userId, elapsedTime, status, logLevel);
-        
-        // Add debug-level logs for specific operations that might be interesting to monitor
-        if (operation == "Search" || operation == "Export")
-        {
-            var resultCount = random.Next(0, 1000);
-            Log.Debug("{Operation} {Entity} returned {ResultCount} results. UserId: {UserId}, ElapsedTime: {ElapsedTime}ms", 
-                operation, entity, resultCount, userId, elapsedTime);
-        }
-        
+
         // Show progress for large numbers to keep user informed
         if (count > 20 && i % 10 == 0)
         {
             Console.WriteLine($"Progress: {i}/{count} logs generated...");
         }
-        
+
         // Add realistic delay between operations to simulate real application behavior
         await Task.Delay(random.Next(200, 800)); // Random delay between 200-800ms
     }
-    
+
     Console.WriteLine($"Generated {count} logs successfully!");
 }
 
@@ -445,3 +479,19 @@ public record Config(
     string eventLogSource,
     string logFilePath
 );
+
+sealed class NormalizedLevelEnricher : ILogEventEnricher
+{
+    static string Map(LogEventLevel l) => l switch
+    {
+        LogEventLevel.Verbose => "trace",
+        LogEventLevel.Debug => "debug",
+        LogEventLevel.Information => "info",
+        LogEventLevel.Warning => "warn",
+        LogEventLevel.Error => "error",
+        LogEventLevel.Fatal => "fatal",
+        _ => l.ToString().ToLowerInvariant()
+    };
+    public void Enrich(LogEvent e, ILogEventPropertyFactory pf) =>
+        e.AddOrUpdateProperty(pf.CreateProperty("level", Map(e.Level)));
+}
